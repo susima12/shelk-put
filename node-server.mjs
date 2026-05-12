@@ -1,8 +1,51 @@
 import { createServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { join, extname } from "node:path";
 import handler from "./dist/server/server.js";
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "0.0.0.0";
+const CLIENT_DIR = new URL("./dist/client/", import.meta.url);
+
+const MIME = {
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".map": "application/json; charset=utf-8",
+};
+
+async function tryServeStatic(req, res) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const urlPath = decodeURIComponent(req.url.split("?")[0]);
+  if (urlPath === "/" || urlPath.endsWith("/")) return false;
+  const filePath = new URL("." + urlPath, CLIENT_DIR);
+  try {
+    const s = await stat(filePath);
+    if (!s.isFile()) return false;
+    const data = await readFile(filePath);
+    const type = MIME[extname(filePath.pathname).toLowerCase()] || "application/octet-stream";
+    res.statusCode = 200;
+    res.setHeader("content-type", type);
+    if (urlPath.startsWith("/assets/")) {
+      res.setHeader("cache-control", "public, max-age=31536000, immutable");
+    }
+    res.end(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function toWebRequest(req) {
   const url = `http://${req.headers.host || "localhost"}${req.url}`;
@@ -27,6 +70,7 @@ function toWebRequest(req) {
 
 const server = createServer(async (req, res) => {
   try {
+    if (await tryServeStatic(req, res)) return;
     const webReq = toWebRequest(req);
     const webRes = await handler.fetch(webReq);
     res.statusCode = webRes.status;
